@@ -1,0 +1,20 @@
+OCAML_LIBS = $(OCAML_LIBS_slack-ws)
+
+FILES[] =
+  slack_ws_t
+  slack_ws_j
+  slack_ws_v
+  slack_ws_access
+  slack_ws
+  slack_ws_http_serv
+  slack_ws_main
+
+Atdgen(slack_ws, -j-std)
+OCamlLibrary(slack-ws, $(FILES))
+Meta(slack-ws)
+
+.DEFAULT: META slack-ws.cma slack-ws.cmxa
+
+.PHONY: clean
+clean:
+  rm -f *.o *.a *.cm* *~ *.annot *.run *.opt META $(ATDGEN_OUTFILES)

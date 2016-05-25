@@ -1,0 +1,15 @@
+type slack_channel = string wrap <ocaml module="Slack_api_channel">
+type slack_teamid = string wrap <ocaml module="Slack_api_teamid">
+type slack_userid = string wrap <ocaml module="Slack_api_userid">
+type slack_ts = string wrap <ocaml module="Slack_api_ts">
+
+type teamid = string wrap <ocaml module="Teamid">
+type uid = string wrap <ocaml module="Uid">
+
+type latest = {
+  uid: uid;
+  teamid: teamid;
+  slack_userid: slack_userid;
+  slack_teamid: slack_teamid;
+  latest: slack_ts;
+}
