@@ -82,5 +82,14 @@ let create_connection slack_teamid input_handler =
       create_websocket_connection ws_url input_handler >>= fun (push, close) ->
       return ()
 
+(*
+   Testing:
+
+   - log into Esper as the desired user
+   - produce Slack auth URL: Slack.app_auth_url ()
+   - visit that URL and follow the oauth steps
+   - grab the auth token from the table slack_app_auth
+*)
+
 let init () =
   return ()
