@@ -74,7 +74,8 @@ let react input_handler waiting_for_pong send frame =
 
 let create_websocket_connection ws_url input_handler waiting_for_pong =
   let open Websocket_lwt.Frame in
-  let uri = Uri.of_string ws_url in
+  let orig_uri = Uri.of_string ws_url in
+  let uri = Uri.with_scheme orig_uri (Some "https") in
   Resolver_lwt.resolve_uri ~uri Resolver_lwt_unix.system >>= fun endp ->
   let ctx = Conduit_lwt_unix.default_ctx in
   Conduit_lwt_unix.endp_to_client ~ctx endp >>= fun client ->
@@ -118,14 +119,14 @@ let create_connection slack_teamid input_handler =
       } in
       return conn
 
-let get_connection slack_teamid input_handler =
+let get_connection slack_teamid =
+   try Some (Hashtbl.find connections slack_teamid)
+   with Not_found -> None
+
+let obtain_connection slack_teamid input_handler =
   let mutex_key = "slack-ws:" ^ Slack_api_teamid.to_string slack_teamid in
   Redis_mutex.with_mutex ~atime:30. ~ltime:60 mutex_key (fun () ->
-    let opt =
-      try Some (Hashtbl.find connections slack_teamid)
-      with Not_found -> None
-    in
-    match opt with
+    match get_connection slack_teamid with
     | Some x -> return x
     | None ->
         create_connection slack_teamid input_handler >>= fun conn ->
@@ -136,7 +137,7 @@ let get_connection slack_teamid input_handler =
 (*
    Send a ping and wait for a pong response for up to 10 seconds.
 *)
-let test_connection x =
+let check_connection x =
   match !(x.waiting_for_pong) with
   | Some (result, _) ->
       result
@@ -162,6 +163,22 @@ let test_connection x =
             (Slack_api_teamid.to_string x.conn_id);
           remove_connection x.conn_id >>= fun () ->
           return false
+
+let check_slack_team_connection slack_teamid =
+  match get_connection slack_teamid with
+  | None -> return false
+  | Some x -> check_connection x
+
+let get_slack_address esper_teamid =
+  User_team.get esper_teamid >>= fun team ->
+  User_preferences.get team >>= fun p ->
+  match p.Api_t.pref_slack_address with
+  | None -> Http_exn.bad_request `Slack_not_configured "Slack not configured"
+  | Some x -> return x
+
+let check_esper_team_connection teamid =
+  get_slack_address teamid >>= fun x ->
+  check_slack_team_connection x.Api_t.slack_teamid
 
 (*
    Testing:
