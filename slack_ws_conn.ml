@@ -22,7 +22,13 @@ type connection = {
   mutable waiting_for_pong: (bool Lwt.t * unit Lwt.u) option ref;
 }
 
-let connections = Hashtbl.create 10
+(*
+   This global table holds at most one connection per Slack team.
+   When a connection goes down it may be replaced by a None value to
+   indicate that it will soon be replaced.
+*)
+let connections : (Slack_api_teamid.t, connection option) Hashtbl.t =
+  Hashtbl.create 10
 
 let is_json_pong s =
   try
@@ -47,22 +53,33 @@ let close (send: send) =
   logf `Info "WS send close";
   send (Frame.close 1000 (* normal closure *))
 
+let connection_existed id =
+  Hashtbl.mem connections id
+
+let reserve_connection id =
+  assert (not (connection_existed id));
+  Hashtbl.add connections id None
+
 let remove_connection id =
   try
-    let {send} = Hashtbl.find connections id in
-    Hashtbl.remove connections id;
-    catch
-      (fun () -> close send)
-      (fun e ->
-         logf `Error "Can't close websocket connection: %s" (string_of_exn e);
-         return ()
-      )
+    match Hashtbl.find connections id with
+    | None -> return ()
+    | Some {send} ->
+        Hashtbl.replace connections id None;
+        catch
+          (fun () -> close send)
+          (fun e ->
+             logf `Error
+               "Can't close websocket connection: %s" (string_of_exn e);
+             return ()
+          )
   with Not_found ->
     return ()
 
 let replace_connection x =
-  async (fun () -> remove_connection x.conn_id);
-  Hashtbl.add connections x.conn_id x
+  let closing = remove_connection x.conn_id in
+  Hashtbl.replace connections x.conn_id (Some x);
+  async (fun () -> closing)
 
 let react input_handler waiting_for_pong send frame =
   match frame.Frame.opcode with
@@ -149,7 +166,7 @@ let create_connection slack_teamid input_handler =
       return conn
 
 let get_connection slack_teamid =
-   try Some (Hashtbl.find connections slack_teamid)
+   try Hashtbl.find connections slack_teamid
    with Not_found -> None
 
 let obtain_connection slack_teamid create_input_handler =
@@ -246,27 +263,33 @@ let rec check_connection_until_failure slack_teamid =
    is no longer usable, and so on.
 *)
 let rec keep_connected slack_teamid input_handler =
-  let connect () =
-    Apputil_error.catch_and_report "Slack WS keep_connected"
-      (fun () ->
-         obtain_connection slack_teamid input_handler >>= fun conn ->
-         logf `Info
-           "Websocket created for Slack team %s"
-           (Slack_api_teamid.to_string slack_teamid);
-         return true
-      )
-      (fun e ->
-         logf `Error
-           "Retriable exception while creating Slack websocket %s: %s"
-           (Slack_api_teamid.to_string slack_teamid) (string_of_exn e);
-         return false
-      )
-  in
-  retry_until_success connect >>=! fun () ->
-  (* connection is now established *)
-  check_connection_until_failure slack_teamid >>=! fun () ->
-  (* connection is now dead and removed from the global table *)
-  keep_connected slack_teamid input_handler
+  if connection_existed slack_teamid then
+    (* assume that another keep_connected job already exists *)
+    return ()
+  else (
+    reserve_connection slack_teamid;
+    let connect () =
+      Apputil_error.catch_and_report "Slack WS keep_connected"
+        (fun () ->
+           obtain_connection slack_teamid input_handler >>= fun conn ->
+           logf `Info
+             "Websocket created for Slack team %s"
+             (Slack_api_teamid.to_string slack_teamid);
+           return true
+        )
+        (fun e ->
+           logf `Error
+             "Retriable exception while creating Slack websocket %s: %s"
+             (Slack_api_teamid.to_string slack_teamid) (string_of_exn e);
+           return false
+        )
+    in
+    retry_until_success connect >>=! fun () ->
+    (* connection is now established *)
+    check_connection_until_failure slack_teamid >>=! fun () ->
+    (* connection is now dead and removed from the global table *)
+    keep_connected slack_teamid input_handler
+  )
 
 (*
    Testing:
@@ -283,6 +306,3 @@ let test () =
        Printf.printf "Received %S\n%!" s;
        return ()
     )
-
-let init () =
-  return ()
