@@ -1,3 +1,7 @@
+# A service that maintains websocket connections to Slack,
+# allowing us to receive notifications on what's happening
+# on a channel (Slack RTM API).
+
 OCAML_LIBS = $(OCAML_LIBS_slack-ws)
 
 FILES[] =
@@ -5,8 +9,13 @@ FILES[] =
   slack_ws_j
   slack_ws_v
   slack_ws_access
+# Connection manager
+  slack_ws_conn
+# Message handler
   slack_ws
+# HTTP service to receive notifications from other internal components
   slack_ws_http_serv
+# Start the service
   slack_ws_main
 
 Atdgen(slack_ws, -j-std)
