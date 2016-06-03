@@ -41,7 +41,7 @@ let pong (send: send) =
 
 let push (send: send) content =
   logf `Info "WS send content %S" content;
-  send (Frame.create ~content ())
+  send (Frame.create ~content:(Bytes.copy content) ())
 
 let close (send: send) =
   logf `Info "WS send close";
@@ -282,8 +282,7 @@ let test () =
     (fun () send s ->
        Printf.printf "Received %S\n%!" s;
        return ()
-    ) >>= fun conn ->
-  push conn.send "{\"id\":0,\"type\":\"ping\"}"
+    )
 
 let init () =
   return ()
