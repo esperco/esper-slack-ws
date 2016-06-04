@@ -30,6 +30,26 @@ type connection = {
 let connections : (Slack_api_teamid.t, connection option) Hashtbl.t =
   Hashtbl.create 10
 
+let get_stats () =
+  let total = Hashtbl.length connections in
+  let connected = Hashtbl.fold (fun k v n ->
+    if v = None then n
+    else n + 1
+  ) connections 0
+  in
+  assert (connected <= total);
+  (connected, total)
+
+let report_stats () =
+  let connected, total = get_stats () in
+  let r = float connected /. float total in
+  logf `Info "Fraction of live Slack websockets: %i/%i (%.0f%%)\n"
+    connected total (100. *. r);
+  if total > 0 then
+    Cloudwatch.send "slack.websocket.connected" r
+  else
+    return ()
+
 let is_json_pong s =
   try
     (Slack_ws_j.type_only_of_string s).Slack_ws_j.type_ = "pong"

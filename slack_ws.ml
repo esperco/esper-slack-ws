@@ -9,6 +9,8 @@ open Lwt
 open Slack_ws_t
 open Slack_ws_conn
 
+let ( >>=! ) = Lwt.bind
+
 let forward_event slack_teamid event_json =
   let url = App_path.Webhook.slack_notif_url slack_teamid in
   Util_http_client.post ~body:event_json (Uri.of_string url)
@@ -45,3 +47,8 @@ let connect_all () =
       connect_team team.Api_t.teamid
     )
   )
+
+let rec stats_loop () =
+  Lwt_unix.sleep 60. >>=! fun () ->
+  async Slack_ws_conn.report_stats;
+  stats_loop ()
