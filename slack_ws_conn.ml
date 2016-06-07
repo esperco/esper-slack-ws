@@ -43,7 +43,7 @@ let get_stats () =
 let report_stats () =
   let connected, total = get_stats () in
   let r = float connected /. float total in
-  logf `Info "Fraction of live Slack websockets: %i/%i (%.0f%%)\n"
+  logf `Info "Fraction of live Slack websockets: %i/%i (%.0f%%)"
     connected total (100. *. r);
   if total > 0 then
     Cloudwatch.send "slack.websocket.connected" r
@@ -134,9 +134,11 @@ let react input_handler waiting_for_pong send frame =
         );
         return ()
       )
-      else
+      else (
+        logf `Debug "Slack WS: handle input";
         input_handler send frame.Frame.content >>= fun () ->
         return ()
+      )
 
   | Opcode.Continuation
   | Opcode.Ctrl _
@@ -241,13 +243,7 @@ let check_slack_team_connection slack_teamid =
 let get_slack_address esper_teamid =
   User_team.get esper_teamid >>= fun team ->
   User_preferences.get team >>= fun p ->
-  match p.Api_t.pref_slack_address with
-  | None -> Http_exn.bad_request `Slack_not_configured "Slack not configured"
-  | Some x -> return x
-
-let check_esper_team_connection teamid =
-  get_slack_address teamid >>= fun x ->
-  check_slack_team_connection x.Api_t.slack_teamid
+  return p.Api_t.pref_slack_address
 
 (*
    Retry with exponential backoff until the specified operation returns
@@ -282,7 +278,7 @@ let rec check_connection_until_failure slack_teamid =
    still works, and create a new connection if the previous one
    is no longer usable, and so on.
 *)
-let rec keep_connected slack_teamid input_handler =
+let rec keep_connected slack_teamid create_input_handler =
   if connection_existed slack_teamid then
     (* assume that another keep_connected job already exists *)
     return ()
@@ -291,7 +287,7 @@ let rec keep_connected slack_teamid input_handler =
     let connect () =
       Apputil_error.catch_and_report "Slack WS keep_connected"
         (fun () ->
-           obtain_connection slack_teamid input_handler >>= fun conn ->
+           obtain_connection slack_teamid create_input_handler >>= fun conn ->
            logf `Info
              "Websocket created for Slack team %s"
              (Slack_api_teamid.to_string slack_teamid);
@@ -308,7 +304,7 @@ let rec keep_connected slack_teamid input_handler =
     (* connection is now established *)
     check_connection_until_failure slack_teamid >>=! fun () ->
     (* connection is now dead and removed from the global table *)
-    keep_connected slack_teamid input_handler
+    keep_connected slack_teamid create_input_handler
   )
 
 (*
