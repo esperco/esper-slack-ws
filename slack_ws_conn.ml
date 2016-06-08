@@ -175,17 +175,23 @@ let create_connection slack_teamid input_handler =
         `Slack_authentication_missing
         "Slack authentication missing"
   | Some auth ->
-      Slack_api.rtm_start auth.Slack_api_t.access_token >>= fun x ->
-      let ws_url = x.Slack_api_t.url in
-      let waiting_for_pong = ref None in
-      create_websocket_connection ws_url
-        input_handler waiting_for_pong >>= fun send ->
-      let conn = {
-        conn_id = slack_teamid;
-        send;
-        waiting_for_pong;
-      } in
-      return conn
+      match auth.Slack_api_t.bot with
+      | None ->
+          Http_exn.bad_request
+            `Slack_authentication_missing
+            "Slack bot authentication missing"
+      | Some { Slack_api_t.bot_access_token } ->
+          Slack_api.rtm_start bot_access_token >>= fun x ->
+          let ws_url = x.Slack_api_t.url in
+          let waiting_for_pong = ref None in
+          create_websocket_connection ws_url
+            input_handler waiting_for_pong >>= fun send ->
+          let conn = {
+            conn_id = slack_teamid;
+            send;
+            waiting_for_pong;
+          } in
+          return conn
 
 let get_connection slack_teamid =
    try Hashtbl.find connections slack_teamid
