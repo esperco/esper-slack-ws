@@ -101,6 +101,20 @@ let replace_connection x =
   Hashtbl.replace connections x.conn_id (Some x);
   async (fun () -> closing)
 
+let async_with_timeout timeout f =
+  async (fun () ->
+    Util_lwt.with_timeout timeout f >>= function
+    | None ->
+        logf `Error "Slack websocket input handler timeout (%g s)" timeout;
+        Apputil_error.report_error "Slack websocket input handler timeout" ""
+    | Some () ->
+        return ()
+  )
+
+(*
+   Input is processed concurrently, with a timeout of 10 seconds.
+   (see call to input_handler below)
+*)
 let react input_handler waiting_for_pong send frame =
   match frame.Frame.opcode with
   | Opcode.Ping ->
@@ -136,7 +150,11 @@ let react input_handler waiting_for_pong send frame =
       )
       else (
         logf `Debug "Slack WS: handle input";
-        input_handler send frame.Frame.content >>= fun () ->
+        (* Run this in the background with a timeout so as to not block
+           other incoming messages *)
+        async_with_timeout 10. (fun () ->
+          input_handler send frame.Frame.content
+        );
         return ()
       )
 
