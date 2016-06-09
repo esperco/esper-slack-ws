@@ -58,19 +58,19 @@ let is_json_pong s =
 
 (* Warning: Slack doesn't respond to standard ping frames *)
 let ping (send: send) =
-  logf `Info "WS send ping";
+  logf `Debug "WS send ping";
   send (Frame.create ~opcode:(Frame.Opcode.Ping) ())
 
 let pong (send: send) =
-  logf `Info "WS send pong";
+  logf `Debug "WS send pong";
   send (Frame.create ~opcode:Frame.Opcode.Pong ())
 
 let push (send: send) content =
-  logf `Info "WS send content %S" content;
+  logf `Debug "WS send content %S" content;
   send (Frame.create ~content:(Bytes.copy content) ())
 
 let close (send: send) =
-  logf `Info "WS send close";
+  logf `Debug "WS send close";
   send (Frame.close 1000 (* normal closure *))
 
 let connection_existed id =
