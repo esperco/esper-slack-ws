@@ -4,16 +4,10 @@
 *)
 
 let run id =
-  let http_server = Slack_ws_http_serv.create_server () in
-  let websocket_launcher = Slack_ws.connect_all () in
-  let websocket_stats = Slack_ws.stats_loop () in
-  Lwt_main.run (
-    Lwt.join [
-      http_server;
-      websocket_launcher;
-      websocket_stats;
-    ]
-  )
+  Lwt.async Slack_ws_http_serv.create_server;
+  Lwt.async Slack_ws.connect_all;
+  Lwt.async Slack_ws.stats_loop;
+  Util_lwt_main.loop ()
 
 let main ~offset =
   Cmdline.parse_options ~offset [];
