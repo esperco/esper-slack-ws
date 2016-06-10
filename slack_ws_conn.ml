@@ -164,12 +164,18 @@ let react input_handler waiting_for_pong send frame =
       logf `Debug "Slack WS received Continuation, Ctrl, or Nonctrl";
       send (Frame.close 1002 (* protocol error *))
 
+let tls_native client =
+  match client with
+  | `TLS conf when (Conf.get()).Conf_t.use_tls_native -> `TLS_native conf
+  | _ -> client
+
 let create_websocket_connection ws_url input_handler waiting_for_pong =
   let orig_uri = Uri.of_string ws_url in
   let uri = Uri.with_scheme orig_uri (Some "https") in
   Resolver_lwt.resolve_uri ~uri Resolver_lwt_unix.system >>= fun endp ->
   let ctx = Conduit_lwt_unix.default_ctx in
   Conduit_lwt_unix.endp_to_client ~ctx endp >>= fun client ->
+  let client = tls_native client in
   Websocket_lwt.with_connection ~ctx client uri >>= fun (recv, send) ->
 
   let frame_stream = Websocket_lwt.mk_frame_stream recv in
