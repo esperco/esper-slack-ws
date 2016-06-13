@@ -17,6 +17,7 @@ let server =
          uri meth headers body))
     >>= (fun body -> Server.respond_string ~status:`OK ~body ())
   in
-  Server.create ~mode:(`TCP (`Port 8000)) (Server.make ~callback ())
+  let port = (Conf.get()).Conf_t.slack_ws_port in
+  Server.create ~mode:(`TCP (`Port port)) (Server.make ~callback ())
 
 let main () = ignore (Lwt_main.run server)
