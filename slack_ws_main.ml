@@ -3,10 +3,11 @@
    components and client websockets listening to each Slack team.
 *)
 
-let run id =
+let run instance_id =
   Lwt.async Slack_ws_http_serv.create_server;
   Lwt.async Slack_ws.connect_all;
   Lwt.async Slack_ws.stats_loop;
+  Lwt.async (fun () -> Slack_ws.monitor_process_health instance_id);
   Util_lwt_main.loop ()
 
 let main ~offset =
@@ -17,4 +18,8 @@ let main ~offset =
     Log.level := `Debug;
     Util_http_client.trace := true
   );
-  Serv_init.init "slack-ws" [0] run
+  let instance_id = Serv_init.({
+    cloudwatch_prefix = "slack-ws";
+    local_id = 0;
+  }) in
+  Serv_init.init "slack-ws" [instance_id] run

@@ -59,3 +59,6 @@ let rec stats_loop () =
   Lwt_unix.sleep 60. >>=! fun () ->
   async Slack_ws_conn.report_stats;
   stats_loop ()
+
+let monitor_process_health instance_id =
+  Health.monitor instance_id.Serv_init.cloudwatch_prefix
