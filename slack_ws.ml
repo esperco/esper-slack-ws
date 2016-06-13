@@ -13,7 +13,8 @@ open Slack_ws_conn
 let ( >>=! ) = Lwt.bind
 
 let forward_event slack_teamid event_json =
-  logf `Debug "Forwarding Slack event";
+  logf `Info "Forwarding event for Slack team %s"
+    (Slack_api_teamid.to_string slack_teamid);
   let url = App_path.Webhook.slack_notif_url slack_teamid in
   Util_http_client.post ~body:event_json (Uri.of_string url)
   >>= fun (status, headers, body) ->
