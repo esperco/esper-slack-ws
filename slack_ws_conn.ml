@@ -80,6 +80,21 @@ let reserve_connection id =
   assert (not (connection_existed id));
   Hashtbl.add connections id None
 
+let unreserve_connection id =
+  try
+    match Hashtbl.find connections id with
+    | Some _ ->
+        logf `Error "Cannot unreserve connection %s"
+          (Slack_api_teamid.to_string id)
+    | None ->
+        Hashtbl.remove connections id
+  with Not_found ->
+    ()
+
+(*
+   Replace connection entry by None, indicating that there used to be
+   a connection.
+*)
 let remove_connection id =
   try
     match Hashtbl.find connections id with
@@ -301,26 +316,38 @@ let rec keep_connected slack_teamid create_input_handler =
     return ()
   else (
     reserve_connection slack_teamid;
-    let connect () =
-      Apputil_error.catch_and_report "Slack WS keep_connected"
-        (fun () ->
-           obtain_connection slack_teamid create_input_handler >>= fun conn ->
-           logf `Info
-             "Websocket created for Slack team %s"
-             (Slack_api_teamid.to_string slack_teamid);
-           return true
-        )
-        (fun e ->
-           logf `Error
-             "Retriable exception while creating Slack websocket %s: %s"
-             (Slack_api_teamid.to_string slack_teamid) (string_of_exn e);
-           return false
-        )
-    in
-    retry_until_success connect >>=! fun () ->
-    (* connection is now established *)
-    check_connection_until_failure slack_teamid >>=! fun () ->
-    (* connection is now dead and removed from the global table *)
+    Apputil_error.catch_and_report "Slack WS "
+      (fun () ->
+         let connect () =
+           Apputil_error.catch_and_report "Slack WS keep_connected"
+             (fun () ->
+                obtain_connection slack_teamid create_input_handler
+                >>= fun conn ->
+                logf `Info
+                  "Websocket created for Slack team %s"
+                  (Slack_api_teamid.to_string slack_teamid);
+                return true
+             )
+             (fun e ->
+                logf `Error
+                  "Retriable exception while creating Slack websocket %s: %s"
+                  (Slack_api_teamid.to_string slack_teamid) (string_of_exn e);
+                return false
+             )
+         in
+         retry_until_success connect >>=! fun () ->
+         (* connection is now established *)
+         check_connection_until_failure slack_teamid
+         (* connection is now dead and replaced by None in the global table *)
+      )
+      (fun e ->
+         (* unexpected exception occurred *)
+         logf `Error "Uncaught exception in Slack_ws_conn.keep_connected: %s"
+           (string_of_exn e);
+         unreserve_connection slack_teamid;
+         return ()
+      )
+    >>=! fun () ->
     keep_connected slack_teamid create_input_handler
   )
 
