@@ -206,6 +206,8 @@ let create_websocket_connection ws_url input_handler waiting_for_pong =
   return send
 
 let create_connection slack_teamid input_handler =
+  logf `Debug "Create websocket connection for Slack team %s"
+    (Slack_api_teamid.to_string slack_teamid);
   Slack.get_bot_access_token slack_teamid >>= fun access_token ->
   Slack_api.rtm_start access_token >>= fun x ->
   let ws_url = x.Slack_api_t.url in
@@ -251,7 +253,9 @@ let check_connection conn =
            let failure = Lwt_unix.sleep 10. >>= fun () -> return false in
            let result = Lwt.pick [success; failure] in
            conn.waiting_for_pong := Some (result, awakener);
-           push conn.send "{\"id\":0,\"type\":\"ping\"}" >>= fun () ->
+           async (fun () ->
+             push conn.send "{\"id\":0,\"type\":\"ping\"}"
+           );
            result
         )
         (fun e ->
@@ -277,11 +281,45 @@ let get_slack_address esper_teamid =
   User_preferences.get team >>= fun p ->
   return p.Api_t.pref_slack_address
 
+let interruptible_sleep sleep =
+  let waiter, awakener = Lwt.wait () in
+  let interrupt () =
+    try
+      Lwt.wakeup awakener ()
+    with
+    | Invalid_argument "Lwt.wakeup_result" -> ()
+    | e -> Trax.raise __LOC__ e
+  in
+  let sleeper =
+    Lwt.pick [
+      Lwt_unix.sleep sleep;
+      waiter;
+    ]
+  in
+  sleeper, interrupt
+
+(*
+   Table of functions that can be used to shorten the sleep between
+   retries with exponential backoff, which will result in an immediate
+   retry.
+*)
+let sleepers = Hashtbl.create 100
+
+let replace_sleeper conn_id interrupt =
+  Hashtbl.replace sleepers conn_id interrupt
+
+let interrupt_sleeper conn_id =
+  let interrupt =
+    try Hashtbl.find sleepers conn_id
+    with Not_found -> (fun () -> ())
+  in
+  interrupt ()
+
 (*
    Retry with exponential backoff until the specified operation returns
    true or fails with an exception.
 *)
-let retry_until_success ?(init_sleep = 1.) ?(max_sleep = 300.) f =
+let retry_until_success ?(init_sleep = 1.) ?(max_sleep = 300.) conn_id f =
   if not (init_sleep > 0. && max_sleep >= init_sleep) then
     invalid_arg "Slack_ws_conn.retry";
   let rec loop sleep =
@@ -290,7 +328,9 @@ let retry_until_success ?(init_sleep = 1.) ?(max_sleep = 300.) f =
       return ()
     else (
       logf `Info "Retrying WS connection to Slack WS in %.3g s" sleep;
-      Lwt_unix.sleep sleep >>= fun () ->
+      let sleeper, interrupt = interruptible_sleep sleep in
+      replace_sleeper conn_id interrupt;
+      sleeper >>=! fun () ->
       loop (min (1.5 *. sleep) max_sleep)
     )
   in
@@ -310,46 +350,52 @@ let rec check_connection_until_failure slack_teamid =
    still works, and create a new connection if the previous one
    is no longer usable, and so on.
 *)
-let rec keep_connected slack_teamid create_input_handler =
-  if connection_existed slack_teamid then
+let keep_connected slack_teamid create_input_handler =
+  if connection_existed slack_teamid then (
     (* assume that another keep_connected job already exists *)
+    interrupt_sleeper slack_teamid;
     return ()
-  else (
-    reserve_connection slack_teamid;
-    Apputil_error.catch_and_report "Slack WS "
-      (fun () ->
-         let connect () =
-           Apputil_error.catch_and_report "Slack WS keep_connected"
-             (fun () ->
-                obtain_connection slack_teamid create_input_handler
-                >>= fun conn ->
-                logf `Info
-                  "Websocket created for Slack team %s"
-                  (Slack_api_teamid.to_string slack_teamid);
-                return true
-             )
-             (fun e ->
-                logf `Error
-                  "Retriable exception while creating Slack websocket %s: %s"
-                  (Slack_api_teamid.to_string slack_teamid) (string_of_exn e);
-                return false
-             )
-         in
-         retry_until_success connect >>=! fun () ->
-         (* connection is now established *)
-         check_connection_until_failure slack_teamid
-         (* connection is now dead and replaced by None in the global table *)
-      )
-      (fun e ->
-         (* unexpected exception occurred *)
-         logf `Error "Uncaught exception in Slack_ws_conn.keep_connected: %s"
-           (string_of_exn e);
-         unreserve_connection slack_teamid;
-         return ()
-      )
-    >>=! fun () ->
-    keep_connected slack_teamid create_input_handler
   )
+  else
+    let rec retry () =
+      Apputil_error.catch_and_report "Slack WS keep_connected (outer catch)"
+        (fun () ->
+           let connect () =
+             Apputil_error.catch_and_report "Slack WS keep_connected"
+               (fun () ->
+                  obtain_connection slack_teamid create_input_handler
+                  >>= fun conn ->
+                  logf `Info
+                    "Websocket created for Slack team %s"
+                    (Slack_api_teamid.to_string slack_teamid);
+                  return true
+               )
+               (fun e ->
+                  logf `Error
+                    "Retriable exception while creating Slack websocket %s: %s"
+                    (Slack_api_teamid.to_string slack_teamid)
+                    (string_of_exn e);
+                  return false
+               )
+           in
+           retry_until_success slack_teamid connect >>=! fun () ->
+           (* connection is now established *)
+           check_connection_until_failure slack_teamid
+           (* connection is now dead and replaced by None
+              in the global table *)
+        )
+        (fun e ->
+           (* unexpected exception occurred *)
+           logf `Error "Uncaught exception in Slack_ws_conn.keep_connected: %s"
+             (string_of_exn e);
+           unreserve_connection slack_teamid;
+           return ()
+        )
+      >>=! fun () ->
+      retry ()
+    in
+    reserve_connection slack_teamid;
+    retry ()
 
 (*
    Testing:
