@@ -46,7 +46,7 @@ let report_stats () =
   logf `Info "Fraction of live Slack websockets: %i/%i (%.0f%%)"
     connected total (100. *. r);
   if total > 0 then
-    Cloudwatch.send "slack.websocket.connected" r
+    Cloudwatch.send "slack-ws.websocket.connected" r
   else
     return ()
 
