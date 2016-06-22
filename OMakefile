@@ -8,7 +8,6 @@ FILES[] =
   slack_ws_t
   slack_ws_j
   slack_ws_v
-  slack_ws_access
 # Connection manager
   slack_ws_conn
 # Message handler
