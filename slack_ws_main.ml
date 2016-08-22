@@ -13,7 +13,7 @@ let run instance_id =
 let main ~offset =
   Cmdline.parse_options ~offset [];
   if not (Conf.is_set ()) then
-    Esper_config.load_based_on_hostname ();
+    Esper_config.set_config_file_based_on_hostname ();
   if not (Esper_config.is_prod ()) then (
     Log.level := `Debug;
     Util_http_client.trace := true
