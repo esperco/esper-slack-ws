@@ -49,7 +49,7 @@ let connect_team esper_teamid =
       return ()
 
 let connect_all () =
-  User_team.iter_active_teams (fun team ->
+  Pay_active.iter_active_teams (fun team ->
     Apputil_error.catch_report_ignore "Initiate Slack session" (fun () ->
       connect_team team.Api_t.teamid
     )
