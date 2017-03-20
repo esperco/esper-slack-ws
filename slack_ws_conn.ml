@@ -208,9 +208,9 @@ let create_websocket_connection ws_url input_handler waiting_for_pong =
 let create_connection slack_teamid input_handler =
   logf `Debug "Create websocket connection for Slack team %s"
     (Slack_api_teamid.to_string slack_teamid);
-  Slack.get_bot_access_token slack_teamid >>= fun access_token ->
+  Slack_user.get_bot_access_token slack_teamid >>= fun access_token ->
   Slack_api.rtm_start access_token >>= fun resp ->
-  let x = Slack.extract_result resp in
+  let x = Slack_util.extract_result resp in
   let ws_url = x.Slack_api_t.url in
   let waiting_for_pong = ref None in
   create_websocket_connection ws_url
