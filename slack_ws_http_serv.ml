@@ -22,7 +22,8 @@ let handle_request path method_ req_body =
       return (`OK, req_body)
   | ["watch"; esper_teamid] ->
       let esper_teamid = blame_client Teamid.of_string esper_teamid in
-      Slack_ws.connect_team esper_teamid >>= fun () ->
+      User_team.get esper_teamid >>= fun team ->
+      Slack_ws.connect_team team.Api_t.team_executive >>= fun () ->
       return (`OK, "OK")
   | _ ->
       return (`Not_found, "Not found")

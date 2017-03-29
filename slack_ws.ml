@@ -31,8 +31,8 @@ let forward_event slack_teamid event_json =
 let input_handler slack_teamid send event_json =
   forward_event slack_teamid event_json
 
-let connect_team esper_teamid =
-  Slack_ws_conn.get_slack_address esper_teamid >>= function
+let connect_team esper_uid =
+  Slack_ws_conn.get_slack_address esper_uid >>= function
   | None -> return ()
   | Some slack_addr ->
       let slack_teamid = slack_addr.Api_t.slack_teamid in
@@ -51,7 +51,7 @@ let connect_team esper_teamid =
 let connect_all () =
   User_team.iter_active_teams (fun team ->
     Apputil_error.catch_report_ignore "Initiate Slack session" (fun () ->
-      connect_team team.Api_t.teamid
+      connect_team team.Api_t.team_executive
     )
   )
 

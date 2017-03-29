@@ -1,3 +1,6 @@
+(*
+   Maintain websocket connections to Slack.
+*)
 
 open Lwt
 open Log
@@ -277,9 +280,8 @@ let check_slack_team_connection slack_teamid =
   | None -> return false
   | Some x -> check_connection x
 
-let get_slack_address esper_teamid =
-  User_team.get esper_teamid >>= fun team ->
-  User_preferences.get team >>= fun p ->
+let get_slack_address esper_uid =
+  User_preferences.get esper_uid >>= fun p ->
   return p.Api_t.pref_slack_address
 
 let interruptible_sleep sleep =
