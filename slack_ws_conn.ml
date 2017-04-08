@@ -213,17 +213,20 @@ let create_connection slack_teamid input_handler =
     (Slack_api_teamid.to_string slack_teamid);
   Slack_user.get_bot_access_token slack_teamid >>= fun access_token ->
   Slack_api.rtm_start access_token >>= fun resp ->
-  let x = Slack_util.extract_result resp in
-  let ws_url = x.Slack_api_t.url in
-  let waiting_for_pong = ref None in
-  create_websocket_connection ws_url
-    input_handler waiting_for_pong >>= fun send ->
-  let conn = {
-    conn_id = slack_teamid;
-    send;
-    waiting_for_pong;
-  } in
-  return conn
+  match Slack_util.extract_result resp with
+  | None ->
+      return None
+  | Some x ->
+      let ws_url = x.Slack_api_t.url in
+      let waiting_for_pong = ref None in
+      create_websocket_connection ws_url
+        input_handler waiting_for_pong >>= fun send ->
+      let conn = {
+        conn_id = slack_teamid;
+        send;
+        waiting_for_pong;
+      } in
+      return (Some conn)
 
 let get_connection slack_teamid =
    try Hashtbl.find connections slack_teamid
@@ -233,12 +236,15 @@ let obtain_connection slack_teamid create_input_handler =
   let mutex_key = "slack-ws:" ^ Slack_api_teamid.to_string slack_teamid in
   Redis_mutex.with_mutex ~atime:30. ~ltime:60 mutex_key (fun () ->
     match get_connection slack_teamid with
-    | Some x -> return x
+    | Some x -> return (Some x)
     | None ->
         let input_handler = create_input_handler () in
-        create_connection slack_teamid input_handler >>= fun conn ->
-        replace_connection conn;
-        return conn
+        create_connection slack_teamid input_handler >>= function
+        | Some conn ->
+            replace_connection conn;
+            return (Some conn)
+        | None ->
+            return None
   )
 
 (*
@@ -367,11 +373,15 @@ let keep_connected slack_teamid create_input_handler =
              Apputil_error.catch_and_report "Slack WS keep_connected"
                (fun () ->
                   obtain_connection slack_teamid create_input_handler
-                  >>= fun conn ->
-                  logf `Info
-                    "Websocket created for Slack team %s"
-                    (Slack_api_teamid.to_string slack_teamid);
-                  return true
+                  >>= function
+                  | None ->
+                      (* supposed to an ignorable error *)
+                      return false
+                  | Some conn ->
+                      logf `Info
+                        "Websocket created for Slack team %s"
+                        (Slack_api_teamid.to_string slack_teamid);
+                      return true
                )
                (fun e ->
                   logf `Error
