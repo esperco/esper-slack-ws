@@ -31,6 +31,9 @@ let forward_event slack_teamid event_json =
 let input_handler slack_teamid send event_json =
   forward_event slack_teamid event_json
 
+let handle_permanent_failure esper_uid slack_teamid =
+  Slack_ws_conn.clear_slack_address esper_uid
+
 let connect_team esper_uid =
   Slack_ws_conn.get_slack_address esper_uid >>= function
   | None -> return ()
@@ -43,7 +46,9 @@ let connect_team esper_uid =
           slack_teamid
           (fun () ->
              logf `Debug "Create input handler";
-             fun send content -> input_handler slack_teamid send content)
+             fun send content -> input_handler slack_teamid send content
+          )
+          (handle_permanent_failure esper_uid)
       in
       async (fun () -> loop);
       return ()

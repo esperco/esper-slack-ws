@@ -114,6 +114,11 @@ let remove_connection id =
   with Not_found ->
     return ()
 
+let remove_connection_completely slack_teamid =
+  let closing = remove_connection slack_teamid in
+  Hashtbl.remove connections slack_teamid;
+  async (fun () -> closing)
+
 let replace_connection x =
   let closing = remove_connection x.conn_id in
   Hashtbl.replace connections x.conn_id (Some x);
@@ -208,43 +213,83 @@ let create_websocket_connection ws_url input_handler waiting_for_pong =
   async loop;
   return send
 
-let create_connection slack_teamid input_handler =
+(*
+   Some errors should be considered permanent by Esper, indicating
+   that the Slack setup of the Esper user isn't usable and should be
+   cleared.
+
+   Error codes are not documented, so the list of errors that are
+   considered permanent will grow as we discover more of such errors.
+*)
+let is_permanent_failure e =
+  match e with
+  | Slack_util.Slack_error "account_inactive" -> true
+  | Slack_util.Slack_error _ -> false
+  | _ -> false
+
+type connection_result =
+  | Retry
+  | Giveup
+  | Connected of connection
+
+let create_connection slack_teamid input_handler handle_permanent_failure =
   logf `Debug "Create websocket connection for Slack team %s"
     (Slack_api_teamid.to_string slack_teamid);
-  Slack_user.get_bot_access_token slack_teamid >>= fun access_token ->
-  Slack_api.rtm_start access_token >>= fun resp ->
-  match Slack_util.extract_result resp with
-  | None ->
-      return None
-  | Some x ->
-      let ws_url = x.Slack_api_t.url in
-      let waiting_for_pong = ref None in
-      create_websocket_connection ws_url
-        input_handler waiting_for_pong >>= fun send ->
-      let conn = {
-        conn_id = slack_teamid;
-        send;
-        waiting_for_pong;
-      } in
-      return (Some conn)
+  catch
+    (fun () ->
+       Slack_user.get_bot_access_token slack_teamid >>= fun access_token ->
+       Slack_api.rtm_start access_token >>= fun resp ->
+       match Slack_util.extract_result resp with
+       | None ->
+           return Retry
+       | Some x ->
+           let ws_url = x.Slack_api_t.url in
+           let waiting_for_pong = ref None in
+           create_websocket_connection ws_url
+             input_handler waiting_for_pong >>= fun send ->
+           let conn = {
+             conn_id = slack_teamid;
+             send;
+             waiting_for_pong;
+           } in
+           return (Connected conn)
+    )
+    (fun e ->
+       if is_permanent_failure e then (
+         handle_permanent_failure slack_teamid >>= fun () ->
+         return Giveup
+       )
+       else
+         Trax.raise __LOC__ e
+    )
 
 let get_connection slack_teamid =
    try Hashtbl.find connections slack_teamid
    with Not_found -> None
 
-let obtain_connection slack_teamid create_input_handler =
+let obtain_connection
+    slack_teamid
+    create_input_handler
+    handle_permanent_failure =
   let mutex_key = "slack-ws:" ^ Slack_api_teamid.to_string slack_teamid in
   Redis_mutex.with_mutex ~atime:30. ~ltime:60 mutex_key (fun () ->
     match get_connection slack_teamid with
-    | Some x -> return (Some x)
+    | Some x -> return (Connected x)
     | None ->
         let input_handler = create_input_handler () in
-        create_connection slack_teamid input_handler >>= function
-        | Some conn ->
-            replace_connection conn;
-            return (Some conn)
-        | None ->
-            return None
+        create_connection
+          slack_teamid
+          input_handler
+          handle_permanent_failure >>= fun result ->
+        (match result with
+         | Connected conn ->
+             replace_connection conn
+         | Retry ->
+             ()
+         | Giveup ->
+             remove_connection_completely slack_teamid
+        );
+        return result
   )
 
 (*
@@ -289,6 +334,12 @@ let check_slack_team_connection slack_teamid =
 let get_slack_address esper_uid =
   User_preferences.get esper_uid >>= fun p ->
   return p.Api_t.pref_slack_address
+
+let clear_slack_address esper_uid =
+  User_preferences.update esper_uid (fun p ->
+    return { p with Api_t.pref_slack_address = None }
+  ) >>= fun p ->
+  return ()
 
 let interruptible_sleep sleep =
   let waiter, awakener = Lwt.wait () in
@@ -359,7 +410,7 @@ let rec check_connection_until_failure slack_teamid =
    still works, and create a new connection if the previous one
    is no longer usable, and so on.
 *)
-let keep_connected slack_teamid create_input_handler =
+let keep_connected slack_teamid create_input_handler handle_permanent_failure =
   if connection_existed slack_teamid then (
     (* assume that another keep_connected job already exists *)
     interrupt_sleeper slack_teamid;
@@ -372,12 +423,15 @@ let keep_connected slack_teamid create_input_handler =
            let connect () =
              Apputil_error.catch_and_report "Slack WS keep_connected"
                (fun () ->
-                  obtain_connection slack_teamid create_input_handler
+                  obtain_connection slack_teamid
+                    create_input_handler
+                    handle_permanent_failure
                   >>= function
-                  | None ->
-                      (* supposed to an ignorable error *)
+                  | Retry ->
                       return false
-                  | Some conn ->
+                  | Giveup ->
+                      return true
+                  | Connected conn ->
                       logf `Info
                         "Websocket created for Slack team %s"
                         (Slack_api_teamid.to_string slack_teamid);
@@ -423,5 +477,9 @@ let test () =
     (Slack_api_teamid.of_string "T19BY0R8X")
     (fun () send s ->
        Printf.printf "Received %S\n%!" s;
+       return ()
+    )
+    (fun slack_teamid ->
+       Printf.printf "Permanent failure\n%!";
        return ()
     )
