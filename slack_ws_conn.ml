@@ -347,7 +347,7 @@ let interruptible_sleep sleep =
     try
       Lwt.wakeup awakener ()
     with
-    | Invalid_argument "Lwt.wakeup_result" -> ()
+    | Invalid_argument _ (* "Lwt.wakeup_result" *) -> ()
     | e -> Trax.raise __LOC__ e
   in
   let sleeper =
