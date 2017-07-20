@@ -232,27 +232,30 @@ type connection_result =
   | Giveup
   | Connected of connection
 
-let create_connection slack_teamid input_handler handle_permanent_failure =
+let create_connection uid slack_teamid input_handler handle_permanent_failure =
   logf `Debug "Create websocket connection for Slack team %s"
     (Slack_api_teamid.to_string slack_teamid);
   catch
     (fun () ->
-       Slack_user.get_bot_access_token slack_teamid >>= fun access_token ->
-       Slack_api.rtm_start access_token >>= fun resp ->
-       match Slack_util.extract_result resp with
+       Slack_user.get_bot_access_token_opt ~uid slack_teamid >>= function
        | None ->
-           return Retry
-       | Some x ->
-           let ws_url = x.Slack_api_t.url in
-           let waiting_for_pong = ref None in
-           create_websocket_connection ws_url
-             input_handler waiting_for_pong >>= fun send ->
-           let conn = {
-             conn_id = slack_teamid;
-             send;
-             waiting_for_pong;
-           } in
-           return (Connected conn)
+           return Giveup
+       | Some access_token ->
+           Slack_api.rtm_start access_token >>= fun resp ->
+           match Slack_util.extract_result resp with
+           | None ->
+               return Retry
+           | Some x ->
+               let ws_url = x.Slack_api_t.url in
+               let waiting_for_pong = ref None in
+               create_websocket_connection ws_url
+                 input_handler waiting_for_pong >>= fun send ->
+               let conn = {
+                 conn_id = slack_teamid;
+                 send;
+                 waiting_for_pong;
+               } in
+               return (Connected conn)
     )
     (fun e ->
        if is_permanent_failure e then (
@@ -268,6 +271,7 @@ let get_connection slack_teamid =
    with Not_found -> None
 
 let obtain_connection
+    uid
     slack_teamid
     create_input_handler
     handle_permanent_failure =
@@ -278,6 +282,7 @@ let obtain_connection
     | None ->
         let input_handler = create_input_handler () in
         create_connection
+          uid
           slack_teamid
           input_handler
           handle_permanent_failure >>= fun result ->
@@ -410,7 +415,8 @@ let rec check_connection_until_failure slack_teamid =
    still works, and create a new connection if the previous one
    is no longer usable, and so on.
 *)
-let keep_connected slack_teamid create_input_handler handle_permanent_failure =
+let keep_connected
+    uid slack_teamid create_input_handler handle_permanent_failure =
   if connection_existed slack_teamid then (
     (* assume that another keep_connected job already exists *)
     interrupt_sleeper slack_teamid;
@@ -423,7 +429,7 @@ let keep_connected slack_teamid create_input_handler handle_permanent_failure =
            let connect () =
              Apputil_error.catch_and_report "Slack WS keep_connected"
                (fun () ->
-                  obtain_connection slack_teamid
+                  obtain_connection uid slack_teamid
                     create_input_handler
                     handle_permanent_failure
                   >>= function
@@ -474,6 +480,7 @@ let keep_connected slack_teamid create_input_handler handle_permanent_failure =
 *)
 let test () =
   keep_connected
+    (Uid.make ())
     (Slack_api_teamid.of_string "T19BY0R8X")
     (fun () send s ->
        Printf.printf "Received %S\n%!" s;

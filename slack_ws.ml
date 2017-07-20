@@ -43,6 +43,7 @@ let connect_team esper_uid =
         (* Ensure this gets started right away, in order to reserve
            the entry in the Slack_ws_conn.connections table. *)
         Slack_ws_conn.keep_connected
+          esper_uid
           slack_teamid
           (fun () ->
              logf `Debug "Create input handler";
