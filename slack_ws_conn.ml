@@ -2,6 +2,7 @@
    Maintain websocket connections to Slack.
 *)
 
+open Printf
 open Lwt
 open Log
 
@@ -232,6 +233,12 @@ type connection_result =
   | Giveup
   | Connected of connection
 
+let string_of_connection_result = function
+  | Retry -> "Retry"
+  | Giveup -> "Giveup"
+  | Connected x ->
+      sprintf "Connected %s" (Slack_api_teamid.to_string x.conn_id)
+
 let create_connection uid slack_teamid input_handler handle_permanent_failure =
   logf `Debug "Create websocket connection for Slack team %s"
     (Slack_api_teamid.to_string slack_teamid);
@@ -243,9 +250,10 @@ let create_connection uid slack_teamid input_handler handle_permanent_failure =
        | Some access_token ->
            Slack_api.rtm_start access_token >>= fun resp ->
            match Slack_util.extract_result resp with
-           | None ->
-               return Retry
-           | Some x ->
+           | `Account_inactive ->
+               Slack_user.clear_posting_param uid >>= fun () ->
+               return Giveup
+           | `OK x ->
                let ws_url = x.Slack_api_t.url in
                let waiting_for_pong = ref None in
                create_websocket_connection ws_url
