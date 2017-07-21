@@ -259,6 +259,11 @@ let create_connection uid slack_teamid input_handler handle_permanent_failure =
     )
     (fun e ->
        if is_permanent_failure e then (
+         logf `Info "Caught permanent connection failure \
+                     for Esper user %s, Slack team %s: %s"
+           (Uid.to_string uid)
+           (Slack_api_teamid.to_string slack_teamid)
+           (string_of_exn e);
          handle_permanent_failure slack_teamid >>= fun () ->
          return Giveup
        )
@@ -452,10 +457,17 @@ let keep_connected
                )
            in
            retry_until_success slack_teamid connect >>=! fun () ->
-           (* connection is now established *)
-           check_connection_until_failure slack_teamid
-           (* connection is now dead and replaced by None
-              in the global table *)
+           logf `Info "Starting to monitor Slack websocket for \
+                       Esper user %s, Slack team %s."
+             (Uid.to_string uid)
+             (Slack_api_teamid.to_string slack_teamid);
+           check_connection_until_failure slack_teamid >>=! fun () ->
+           logf `Info "Connection for Esper user %s, Slack team %s, \
+                       is now dead and replaced by None \
+                       in the global table"
+             (Uid.to_string uid)
+             (Slack_api_teamid.to_string slack_teamid);
+           return ()
         )
         (fun e ->
            (* unexpected exception occurred *)
