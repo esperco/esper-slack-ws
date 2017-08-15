@@ -8,4 +8,5 @@ It won't build as is but most of the code was used in production.
 Description
 -----------
 
-Sorry, no description yet :cry:
+OCaml/Lwt service that maintains websockets to Slack and forwards incoming 
+traffic to an http/json server.
